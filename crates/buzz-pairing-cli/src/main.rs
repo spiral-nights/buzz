@@ -96,6 +96,11 @@ enum CliError {
 
 #[tokio::main]
 async fn main() {
+    // Install the ring CryptoProvider for rustls (required for wss://).
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     let cli = Cli::parse();
     if let Err(e) = run(cli.command).await {
         eprintln!("error: {e}");
@@ -113,7 +118,7 @@ async fn run(cmd: Cmd) -> Result<(), CliError> {
 
 async fn cmd_source(relay_url: String, nsec: Option<String>) -> Result<(), CliError> {
     // Resolve the payload to transfer.
-    let (payload_str, payload_type) = resolve_payload(nsec)?;
+    let (payload_str, payload_type) = resolve_payload(&relay_url, nsec)?;
 
     // Create pairing session.
     let (mut session, qr) = PairingSession::new_source(relay_url.clone());
@@ -576,25 +581,55 @@ fn parse_relay_event(text: &str, sub_id: &str) -> Option<Event> {
 
 /// Resolve the payload to send.
 ///
-/// If `nsec` is provided, parse it as bech32 and return the raw nsec string.
-/// Otherwise generate a fresh test key and return its nsec.
-fn resolve_payload(nsec: Option<String>) -> Result<(Zeroizing<String>, PayloadType), CliError> {
-    match nsec {
+/// Builds a JSON payload matching what the Play Store phone app expects:
+/// `{relayUrl, pubkey, nsec}`. This is sent as `PayloadType::Custom` since
+/// the phone payload handler (`_processPayload`) reads the JSON structure,
+/// not a raw nsec.
+fn resolve_payload(
+    relay_url: &str,
+    nsec: Option<String>,
+) -> Result<(Zeroizing<String>, PayloadType), CliError> {
+    // If no nsec provided, generate a test key and warn.
+    let nsec_str: Zeroizing<String> = match nsec {
         Some(s) => {
             // Validate it parses as a secret key.
-            let _sk = SecretKey::parse(&s).map_err(|e| CliError::InvalidNsec(e.to_string()))?;
-            Ok((Zeroizing::new(s), PayloadType::Nsec))
+            let sk =
+                SecretKey::parse(&s).map_err(|e| CliError::InvalidNsec(e.to_string()))?;
+            Zeroizing::new(s)
         }
         None => {
             let keys = Keys::generate();
-            let nsec_str = keys
+            let ns = keys
                 .secret_key()
                 .to_bech32()
                 .map_err(|e| CliError::InvalidNsec(e.to_string()))?;
             println!("(no --nsec provided; using generated test key)");
-            Ok((Zeroizing::new(nsec_str), PayloadType::Nsec))
+            Zeroizing::new(ns)
         }
-    }
+    };
+
+    // Compute the relay URL in https form (the phone stores it that way).
+    let https_relay = relay_url
+        .strip_prefix("wss://")
+        .or_else(|| relay_url.strip_prefix("ws://"))
+        .map(|host| format!("https://{host}"))
+        .unwrap_or_else(|| relay_url.to_string());
+
+    // Derive pubkey from the nsec.
+    let sk = SecretKey::parse(&nsec_str).map_err(|e| CliError::InvalidNsec(e.to_string()))?;
+    let keys = Keys::new(sk);
+    let pubkey_hex = keys.public_key().to_hex();
+
+    let payload = serde_json::json!({
+        "relayUrl": https_relay,
+        "pubkey": pubkey_hex,
+        "nsec": *nsec_str,
+    });
+
+    let payload_json = serde_json::to_string(&payload)
+        .map_err(|e| CliError::Other(format!("failed to serialize payload: {e}")))?;
+
+    Ok((Zeroizing::new(payload_json), PayloadType::Custom))
 }
 
 /// Read a single line from stdin (trims trailing newline).
