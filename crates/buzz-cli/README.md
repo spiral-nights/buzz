@@ -146,6 +146,7 @@ stored rules in `validation_error` so an owner can remove and repair them.
 | | `runs` | Get workflow run history |
 | | `approve` | Approve/deny a workflow step |
 | `feed` | `get` | Get your activity feed |
+| `invites` | `mint` | Mint a community invite code (owner/admin); prints a join URL |
 | `social` | `publish` | Publish a NIP-01 note |
 | | `set-contacts` | Set NIP-02 contact list |
 | | `event` | Get a Nostr event |

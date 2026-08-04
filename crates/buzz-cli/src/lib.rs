@@ -236,6 +236,22 @@ enum Cmd {
     /// Community moderation — reports queue, bans, timeouts, audit trail
     #[command(subcommand)]
     Moderation(ModerationCmd),
+    /// Mint community invite codes (owner/admin) and share join links
+    #[command(subcommand)]
+    Invites(InvitesCmd),
+}
+
+#[derive(Subcommand)]
+pub enum InvitesCmd {
+    /// Mint a community invite code. Requires owner or admin role.
+    Mint {
+        /// Requested lifetime in seconds (60..2_592_000; default 72h)
+        #[arg(long)]
+        ttl_secs: Option<u64>,
+        /// Maximum uses before the invite is exhausted (1..10_000)
+        #[arg(long)]
+        max_uses: Option<i32>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -1826,6 +1842,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Upload(sub) => commands::upload::dispatch(sub, &client).await,
         Cmd::Mem(sub) => commands::mem::dispatch(sub, &client).await,
         Cmd::Moderation(sub) => commands::moderation::dispatch(sub, &client, &cli.format).await,
+        Cmd::Invites(sub) => commands::invites::dispatch(sub, &client).await,
         Cmd::Pack(_) => unreachable!("handled above"),
     }
 }
@@ -1874,6 +1891,7 @@ mod tests {
             "dms",
             "emoji",
             "feed",
+            "invites",
             "issues",
             "media",
             "mem",
@@ -2058,6 +2076,7 @@ mod tests {
                 "untimeout"
             ]
         );
+        assert_eq!(names(&cmd, "invites"), vec!["mint"]);
     }
 
     #[test]
@@ -2069,6 +2088,7 @@ mod tests {
             ("dms", 4),
             ("emoji", 5),
             ("feed", 1),
+            ("invites", 1),
             ("issues", 4),
             ("media", 1),
             ("messages", 8),

@@ -849,6 +849,39 @@ impl BuzzClient {
         .await
     }
 
+    /// POST a JSON body to a NIP-98-authed relay endpoint (e.g. `/api/invites`),
+    /// returning the raw JSON response body.
+    pub async fn post_authed(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<String, CliError> {
+        let url = format!("{}{path}", self.relay_url);
+        let body_bytes = bytes::Bytes::from(
+            serde_json::to_vec(body)
+                .map_err(|e| CliError::Other(format!("request serialization failed: {e}")))?,
+        );
+        self.with_retry_body(|| {
+            let body = body_bytes.clone();
+            let url = url.clone();
+            async move {
+                let auth = sign_nip98(&self.keys, "POST", &url, Some(&body))?;
+                let resp = self
+                    .with_auth_tag(
+                        self.http
+                            .post(&url)
+                            .header("Authorization", auth)
+                            .header("Content-Type", "application/json")
+                            .body(body),
+                    )
+                    .send()
+                    .await?;
+                self.handle_response(resp).await
+            }
+        })
+        .await
+    }
+
     /// Submit a signed Nostr event via POST /events.
     ///
     /// For non-idempotent moderation command kinds (9040–9044), an ambiguous
